@@ -18,6 +18,11 @@
 #include <IRsend.h>
 #include <SPI.h>
 
+#include <DNSServer.h>
+#include <ESP8266WebServer.h>
+#include <WiFiManager.h>
+#include <ESP8266mDNS.h>
+
 #define TOPSZ                  60           // Max number of characters in topic string
 #define MESSZ                  240          // Max number of characters in JSON message string
 #define WIFI_SSID "GinWiFi"
@@ -28,15 +33,21 @@
 #define MQTT_PASS "aiyvoicehass"
 #define MQTT_CLIENT_ID "livingroomhvac"
 #define MQTT_STATUS_CHANNEL "livingroom/meteo/"
+#define HTTP_PORT 80  // The port the HTTP server is listening on.
+#define HOSTNAME "lrclimate"  // Name of the device you want in mDNS.
 
 SSD1306Wire display(0x3c, D7, D5);
 DHT dht(D6, DHT22);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
-IRSenderBitBang irSender(D2);
+IRSenderBitBang irSender(D8);
 MitsubishiHeavyZJHeatpumpIR *heatpump;
 Timer t;
 float last_temp = sqrt(-1), last_hum = sqrt(-1);
+
+ESP8266WebServer server(HTTP_PORT);
+MDNSResponder mdns;
+WiFiManager wifiManager;
 
 // Set defaults
 uint8_t AC_POWER = POWER_OFF,
@@ -67,6 +78,7 @@ void setup() {
 
   initWIFI();
   initOTA();
+  initServer();
 
   Serial.println("Ready");
   Serial.print("IP address: ");
@@ -85,6 +97,7 @@ void setup() {
 }
 
 void loop() {
+  server.handleClient();
   ArduinoOTA.handle();
   mqttClient.loop();
   t.update();
@@ -112,8 +125,8 @@ void twoLoop(void *context) {
     char message[MESSZ];
     sprintf(
       message,
-      " power: %d, mode: %d, fan: %d\n temp: %d\n vswing: %d, hswing: %d",
-      AC_POWER, AC_MODE, AC_FAN, AC_TEMP, AC_VSWING, AC_HSWING
+      " power: %d, mode: %d, fan: %d\n t: %d, vs: %d, hs: %d\n ip: %s",
+      AC_POWER, AC_MODE, AC_FAN, AC_TEMP, AC_VSWING, AC_HSWING, WiFi.localIP().toString().c_str()
     );
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(0, 0, message);
@@ -302,6 +315,15 @@ void initWIFI() {
     delay(5000);
     ESP.restart();
   }
+/*
+  delay(10);
+  wifiManager.setTimeout(300);  // Time out after 5 mins.
+  if (!wifiManager.autoConnect()) {
+    delay(3000);
+    ESP.reset();
+    delay(5000); // Reboot. A.k.a. "Have you tried turning it Off and On again?"
+  }
+*/
 }
 
 void initOTA() {
@@ -328,3 +350,94 @@ void initOTA() {
   });
 }
 
+void initServer() {
+  if (mdns.begin(HOSTNAME, WiFi.localIP())) {
+    Serial.println("MDNS responder started");
+  }
+
+  // Setup the root web page.
+  server.on("/", handleRoot);
+  // Setup a reset page to cause WiFiManager information to be reset.
+  server.on("/reset", handleReset);
+
+  // Setup the URL to allow Over-The-Air (OTA) firmware updates.
+  server.on("/update", HTTP_POST, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+    ESP.restart();
+  }, []() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      WiFiUDP::stopAll();
+      Serial.println("Update: " + upload.filename);
+      uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) &
+                                0xFFFFF000;
+      if (!Update.begin(maxSketchSpace)) {  // start with max available size
+      }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      if (Update.write(upload.buf, upload.currentSize) !=
+          upload.currentSize) {
+      }
+    } else if (upload.status == UPLOAD_FILE_END) {
+      if (Update.end(true)) {  // true to set the size to the current progress
+        Serial.println("Update Success: " + (String) upload.totalSize +
+              "\nRebooting...");
+      }
+    }
+    yield();
+  });
+
+  // Set up an error page.
+  server.onNotFound(handleNotFound);
+
+  server.begin();
+}
+
+void handleRoot() {
+  server.send(200, "text/html",
+              "<html><head><title>Climate MQTT server</title></head>"
+              "<body>"
+              "<center><h1>ESP8266 Climate MQTT Server</h1></center>"
+              "<br><hr>"
+              "<h3>Information</h3>"
+              "<p>IP address: " + WiFi.localIP().toString() + "<br>"
+              "<br><hr>"
+              "<h3>Update IR Server firmware</h3><p>"
+              "<b><mark>Warning:</mark></b><br> "
+              "<i>Updating your firmware may screw up your access to the device. "
+              "If you are going to use this, know what you are doing first "
+              "(and you probably do).</i><br>"
+              "<form method='POST' action='/update' enctype='multipart/form-data'>"
+              "Firmware to upload: <input type='file' name='update'>"
+              "<input type='submit' value='Update'>"
+              "</form>"
+              "</body></html>");
+}
+
+void handleReset() {
+  server.send(200, "text/html",
+              "<html><head><title>Reset Config</title></head>"
+              "<body>"
+              "<h1>Resetting the WiFiManager config back to defaults.</h1>"
+              "<p>Device restarting. Try connecting in a few seconds.</p>"
+              "</body></html>");
+  // Do the reset.
+  wifiManager.resetSettings();
+  delay(10);
+  ESP.restart();
+  delay(1000);
+}
+
+void handleNotFound() {
+  String message = "File Not Found\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET)?"GET":"POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+  for (uint8_t i=0; i < server.args(); i++)
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  server.send(404, "text/plain", message);
+}
