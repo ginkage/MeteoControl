@@ -36,6 +36,9 @@
 #define HTTP_PORT 80  // The port the HTTP server is listening on.
 #define HOSTNAME "lrclimate"  // Name of the device you want in mDNS.
 
+const int buttonPin = D3;
+bool lastBS = false;
+
 SSD1306Wire display(0x3c, D7, D5);
 DHT dht(D6, DHT22);
 WiFiClient espClient;
@@ -61,6 +64,8 @@ void setup() {
   Serial.begin(9600);
   Serial.println("Booting");
   delay(10);
+
+  pinMode(buttonPin, INPUT);
 
   Serial.println("Setup TFT");
   display.init();
@@ -94,12 +99,25 @@ void setup() {
 
   Serial.println("Setup MQTT");
   initMQTT();
+
+  displayInfo();
 }
 
 void loop() {
   server.handleClient();
   ArduinoOTA.handle();
   mqttClient.loop();
+
+  int buttonState = digitalRead(buttonPin);
+  if (buttonState == HIGH) {
+    lastBS = true;
+  } else {
+    if (lastBS) {
+      displayInfo();
+    }
+    lastBS = false;
+  }
+
   t.update();
 }
 
@@ -117,33 +135,57 @@ void fiveLoop(void *context) {
 void twoLoop(void *context) {
   float t = dht.readTemperature();
   float h = dht.readHumidity();
+  bool need_update = false;
 
-  if (!isnan(t) || !isnan(h)) {
-    display.clear();
-    display.setFont(ArialMT_Plain_10);
-
-    char message[MESSZ];
-    sprintf(
-      message,
-      " power: %d, mode: %d, fan: %d\n t: %d, vs: %d, hs: %d\n ip: %s",
-      AC_POWER, AC_MODE, AC_FAN, AC_TEMP, AC_VSWING, AC_HSWING, WiFi.localIP().toString().c_str()
-    );
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.drawString(0, 0, message);
-    display.setTextAlignment(TEXT_ALIGN_CENTER);
-
-    if (!isnan(t)) {
-      display.drawString(64, 40, "t " + String(t, 1) + " °C\n");
-      last_temp = t;
+  if (!isnan(t)) {
+    if (isnan(last_temp)) {
+      need_update = true;
     }
-
-    if (!isnan(h)) {
-      display.drawString(64, 52, "h " + String(h, 1) + " %");
-      last_hum = h;
-    }
-
-    display.display();
+    last_temp = t;
   }
+
+  if (!isnan(h)) {
+    if (isnan(last_hum)) {
+      need_update = true;
+    }
+    last_hum = h;
+  }
+
+  if (need_update) {
+    displayInfo();
+  }
+}
+
+void displayInfo() {
+  display.clear();
+  display.setFont(ArialMT_Plain_10);
+
+  char message[MESSZ];
+  sprintf(
+    message,
+    " power: %d, mode: %d, fan: %d\n t: %d, vs: %d, hs: %d\n ip: %s",
+    AC_POWER, AC_MODE, AC_FAN, AC_TEMP, AC_VSWING, AC_HSWING, WiFi.localIP().toString().c_str()
+  );
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(0, 0, message);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+
+  if (!isnan(last_temp)) {
+    display.drawString(64, 40, "t " + String(last_temp, 1) + " °C\n");
+  }
+
+  if (!isnan(last_hum)) {
+    display.drawString(64, 52, "h " + String(last_hum, 1) + " %");
+  }
+
+  display.display();
+
+  t.after(5000, clearDisplay, (void *)0);
+}
+
+void clearDisplay(void *context) {
+  display.clear();
+  display.display();
 }
 
 void initMQTT() {
@@ -227,6 +269,7 @@ void mqttDataCb(char* topic, byte* data, unsigned int data_len) {
   bool _3DAuto = (AC_HSWING == HDIR_SWING);
   heatpump->send(irSender, AC_POWER, AC_MODE, AC_FAN, AC_TEMP, AC_VSWING, AC_HSWING, cleanMode, silentMode, _3DAuto);
   publishState();
+  displayInfo();
 }
 
 void publishState() {
@@ -276,7 +319,7 @@ void publishState() {
   }
 }
 
-void publishTopic(char *topic, String state) {
+void publishTopic(const char *topic, String state) {
   if (state == "") {
     return;
   }
