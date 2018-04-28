@@ -23,6 +23,10 @@
 #include <WiFiManager.h>
 #include <ESP8266mDNS.h>
 
+#include <EEPROM.h>
+#include "spi_flash.h"
+#include <Embedis.h>
+
 #define TOPSZ                  60           // Max number of characters in topic string
 #define MESSZ                  240          // Max number of characters in JSON message string
 #define WIFI_SSID "GinWiFi"
@@ -67,6 +71,24 @@ void setup() {
 
   pinMode(buttonPin, INPUT);
 
+  Serial.println("Setup settings");
+  // Create a key-value Dictionary in emulated EEPROM (FLASH actually...)
+  EEPROM.begin(SPI_FLASH_SEC_SIZE);
+  Embedis::dictionary( 
+      "EEPROM",
+      SPI_FLASH_SEC_SIZE,
+      [](size_t pos) -> char { return EEPROM.read(pos); },
+      [](size_t pos, char value) { EEPROM.write(pos, value); },
+      []() { EEPROM.commit(); }
+  );
+
+  AC_POWER = getSetting("power", AC_POWER);
+  AC_MODE = getSetting("mode", AC_MODE);
+  AC_FAN = getSetting("fan", AC_FAN);
+  AC_TEMP = getSetting("temp", AC_TEMP);
+  AC_VSWING = getSetting("vswing", AC_VSWING);
+  AC_HSWING = getSetting("hswing", AC_HSWING);
+
   Serial.println("Setup TFT");
   display.init();
   display.flipScreenVertically();
@@ -101,6 +123,18 @@ void setup() {
   initMQTT();
 
   displayInfo();
+}
+
+int getSetting(const String& key, int defaultValue) {
+  String value;
+  if (!Embedis::get(key, value)) {
+    value = String(defaultValue);
+  }
+  return value.toInt();
+}
+
+bool setSetting(const String& key, int value) {
+    return Embedis::set(key, String(value));
 }
 
 void loop() {
@@ -238,6 +272,8 @@ void mqttDataCb(char* topic, byte* data, unsigned int data_len) {
         AC_POWER = POWER_OFF;
       }
     }
+    setSetting("power", AC_POWER);
+    setSetting("mode", AC_MODE);
   } else if (!strcmp(suffix, "fan")) {
     Serial.print("fan ");
     Serial.println(payload);
@@ -250,10 +286,12 @@ void mqttDataCb(char* topic, byte* data, unsigned int data_len) {
     } else if (!strcmp(dataBuf, "high")) {
       AC_FAN = FAN_3;
     }
+    setSetting("fan", AC_FAN);
   } else if (!strcmp(suffix, "target")) {
     Serial.print("target ");
     Serial.println(payload);
     AC_TEMP = payload;
+    setSetting("temp", AC_TEMP);
   } else if (!strcmp(suffix, "swing")) {
     if (!strcmp(dataBuf, "auto")) {
       AC_VSWING = VDIR_SWING;
@@ -262,6 +300,8 @@ void mqttDataCb(char* topic, byte* data, unsigned int data_len) {
       AC_VSWING = VDIR_UP;
       AC_HSWING = HDIR_MIDDLE;
     }
+    setSetting("vswing", AC_VSWING);
+    setSetting("hswing", AC_HSWING);
   }
 
   bool cleanMode = false;
