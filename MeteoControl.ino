@@ -12,8 +12,9 @@
 #include <SSD1306.h>
 #include <SSD1306Wire.h>
 
-#include <DHT.h>
-#include <DHT_U.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+
 #include <IRremoteESP8266.h>
 #include <IRsend.h>
 #include <SPI.h>
@@ -40,21 +41,19 @@
 #define HTTP_PORT 80  // The port the HTTP server is listening on.
 #define HOSTNAME "lrclimate"  // Name of the device you want in mDNS.
 
-const int buttonPin = D3;
-bool lastBS = false;
-
-SSD1306Wire display(0x3c, D7, D5);
-DHT dht(D6, DHT22);
+ESP8266WebServer server(HTTP_PORT);
+MDNSResponder mdns;
+WiFiManager wifiManager;
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
+Adafruit_BME280 bme; // I2C
+SSD1306Wire display(0x3c, D6, D5);
 IRSenderBitBang irSender(D8);
 MitsubishiHeavyZJHeatpumpIR *heatpump;
 Timer t;
 float last_temp = sqrt(-1), last_hum = sqrt(-1);
-
-ESP8266WebServer server(HTTP_PORT);
-MDNSResponder mdns;
-WiFiManager wifiManager;
+const int buttonPin = D3;
+bool lastBS = false;
 
 // Set defaults
 uint8_t AC_POWER = POWER_OFF,
@@ -100,8 +99,12 @@ void setup() {
   display.drawString(64, 32, "Hello!");
   display.display();
 
-  Serial.println("Setup DHT");
-  dht.begin();
+  Serial.println("Setup Climate Sensor");
+  Wire.begin(D6, D5);
+  bool status = bme.begin(0x76);
+  if (!status) {
+    Serial.println("Could not find a valid BME280 sensor, check wiring!");
+  } 
 
   initWIFI();
   initOTA();
@@ -167,8 +170,8 @@ void fiveLoop(void *context) {
 }
 
 void twoLoop(void *context) {
-  float t = dht.readTemperature();
-  float h = dht.readHumidity();
+  float t = bme.readTemperature();
+  float h = bme.readHumidity();
   bool need_update = false;
 
   if (!isnan(t)) {
