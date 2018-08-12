@@ -30,12 +30,12 @@
 
 #define TOPSZ                  60           // Max number of characters in topic string
 #define MESSZ                  240          // Max number of characters in JSON message string
-#define WIFI_SSID "GinWiFi"
-#define WIFI_PASS "deadbeef"
-#define MQTT_HOST "londonpi"
+#define WIFI_SSID "********"
+#define WIFI_PASS "********"
+#define MQTT_HOST "********"
 #define MQTT_PORT 1883
-#define MQTT_USER "homeassistant"
-#define MQTT_PASS "aiyvoicehass"
+#define MQTT_USER "********"
+#define MQTT_PASS "********"
 #define MQTT_CLIENT_ID "livingroomhvac"
 #define MQTT_STATUS_CHANNEL "livingroom/meteo/"
 #define HTTP_PORT 80  // The port the HTTP server is listening on.
@@ -104,8 +104,16 @@ void setup() {
   bool status = bme.begin(0x76);
   if (!status) {
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
+  } else {
+    bme.setSampling(Adafruit_BME280::MODE_FORCED,
+                Adafruit_BME280::SAMPLING_X1, // temperature
+                Adafruit_BME280::SAMPLING_X1, // pressure
+                Adafruit_BME280::SAMPLING_X1, // humidity
+                Adafruit_BME280::FILTER_OFF,
+                Adafruit_BME280::STANDBY_MS_0_5);
   } 
 
+  Serial.println("Setup WiFi");
   initWIFI();
   initOTA();
   initServer();
@@ -115,9 +123,8 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   // Init loop timers
-  t.every(2000, twoLoop, (void *)0);
-  t.every(5000, fiveLoop, (void *)0);
-  t.every(10000, tenLoop, (void *)0);
+  tenLoop(nullptr);
+  t.every(30000, tenLoop, (void *)0);
 
   Serial.println("Setup HVAC");
   heatpump = new MitsubishiHeavyZJHeatpumpIR();
@@ -159,18 +166,12 @@ void loop() {
 }
 
 void tenLoop(void *context) {
-  publishState();
-}
-
-// Reconnect to mqtt every 5 seconds if connection is lost
-void fiveLoop(void *context) {
   if (!mqttClient.connected()) {
     reconnectMQTT();
   }
-}
 
-void twoLoop(void *context) {
-  float t = bme.readTemperature();
+  bme.takeForcedMeasurement();
+  float t = bme.readTemperature() - 6;
   float h = bme.readHumidity();
   bool need_update = false;
 
@@ -191,6 +192,8 @@ void twoLoop(void *context) {
   if (need_update) {
     displayInfo();
   }
+
+  publishState();
 }
 
 void displayInfo() {
