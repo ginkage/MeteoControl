@@ -1,0 +1,59 @@
+esphome:
+  name: livingroom
+  platform: ESP8266
+  board: esp_wroom_02
+
+wifi:
+  ssid: "GinWiFi"
+  password: "deadbeef"
+
+logger:
+  level: DEBUG
+  baud_rate: 0
+
+api:
+  reboot_timeout: 0s
+
+ota:
+ 
+i2c:
+  scan: False
+ 
+uart:
+  rx_pin: GPIO3
+  tx_pin: GPIO1
+  baud_rate: 9600
+
+sensor:
+  - platform: pmsx003
+    type: PMSX003
+    pm_1_0:
+      name: "Particulate Matter <1.0µm Concentration"
+    pm_2_5:
+      name: "Particulate Matter <2.5µm Concentration"
+    pm_10_0:
+      name: "Particulate Matter <10.0µm Concentration"
+  - platform: sgp30
+    eco2:
+      name: "eCO2"
+      accuracy_decimals: 1
+    tvoc:
+      name: "TVOC"
+      accuracy_decimals: 1
+    baseline:
+      eco2_baseline: 0x90B8
+      tvoc_baseline: 0x923A
+
+switch:
+  - platform: gpio
+    pin:
+      number: GPIO14
+      inverted: no
+    id: pms_set
+ 
+interval:
+  - interval: 60s
+    then:
+      - switch.turn_on: pms_set
+      - delay: 5s
+      - switch.turn_off: pms_set

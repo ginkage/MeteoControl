@@ -1,0 +1,85 @@
+esphome:
+  name: hvac
+  platform: ESP8266
+  board: d1_mini
+  libraries:
+    - HeatpumpIR
+    - IRremoteESP8266
+  includes:
+    - mitsubishi_climate.h
+    - 'lib/python3.7/site-packages/esphome/components/climate_ir/climate_ir.h'
+    - 'lib/python3.7/site-packages/esphome/components/climate_ir/climate_ir.cpp'
+
+wifi:
+  ssid: "GinWiFi"
+  password: "deadbeef"
+
+logger:
+  level: DEBUG
+
+api:
+  reboot_timeout: 0s
+
+ota:
+
+i2c:
+  sda: D6
+  scl: D5
+  scan: False
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    lambda: |-
+      char message[240];
+      auto hvac = (MitsubishiClimate*) id(mitsubishi_hvac);
+      it.print(0, 0, id(my_font), hvac->print_state1(message));
+      it.print(0, 12, id(my_font), hvac->print_state2(message));
+      it.printf(0, 30, id(my_font), " ip: %s", WiFi.localIP().toString().c_str());
+      it.printf(64, 40, id(my_font), TextAlign::TOP_CENTER, "t %.1f °C", id(my_temperature).state);
+      it.printf(64, 52, id(my_font), TextAlign::TOP_CENTER, "h %.1f %%", id(my_humidity).state);
+
+font:
+  - file: "ArialMT.ttf"
+    id: my_font
+    size: 10
+
+sensor:
+  - platform: bme280
+    temperature:
+      name: "BME280 Temperature"
+      oversampling: 16x
+      id: my_temperature
+    pressure:
+      name: "BME280 Pressure"
+    humidity:
+      name: "BME280 Humidity"
+      id: my_humidity
+    address: 0x76
+    update_interval: 60s
+
+remote_transmitter:
+  pin: D8
+  carrier_duty_percent: 50%
+  id: my_transmitter
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: D3
+      inverted: yes
+    id: button
+
+climate:
+  - platform: custom
+    lambda: |-
+      auto mitsubishi_climate = new MitsubishiClimate();
+      mitsubishi_climate->set_sensor(id(my_temperature));
+      mitsubishi_climate->set_transmitter(id(my_transmitter));
+      App.register_component(mitsubishi_climate);
+      return {mitsubishi_climate};
+
+    climates:
+      - name: "Mitsubishi HVAC"
+        id: mitsubishi_hvac
