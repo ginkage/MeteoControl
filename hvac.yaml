@@ -7,8 +7,8 @@ esphome:
     - IRremoteESP8266
   includes:
     - mitsubishi_climate.h
-    - 'lib/python3.7/site-packages/esphome/components/climate_ir/climate_ir.h'
-    - 'lib/python3.7/site-packages/esphome/components/climate_ir/climate_ir.cpp'
+    - '/opt/esphome/esphome/components/climate_ir/climate_ir.h'
+    - '/opt/esphome/esphome/components/climate_ir/climate_ir.cpp'
 
 wifi:
   ssid: "GinWiFi"
@@ -23,7 +23,7 @@ api:
 ota:
 
 i2c:
-  sda: D6
+  sda: D7
   scl: D5
   scan: False
 
@@ -46,17 +46,15 @@ font:
     size: 10
 
 sensor:
-  - platform: bme280
+  - platform: dht
+    pin: D6
+    model: DHT22
     temperature:
-      name: "BME280 Temperature"
-      oversampling: 16x
+      name: "Living Room Temperature"
       id: my_temperature
-    pressure:
-      name: "BME280 Pressure"
     humidity:
-      name: "BME280 Humidity"
+      name: "Living Room Humidity"
       id: my_humidity
-    address: 0x76
     update_interval: 60s
 
 remote_transmitter:
